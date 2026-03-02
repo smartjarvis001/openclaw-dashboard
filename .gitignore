@@ -1,0 +1,10 @@
+node_modules/
+dashboard.log
+*.log
+*.bak
+*.bak2
+*.bak3
+.env
+.env.*
+v*.txt
+*.debug_bak_*
