@@ -35,9 +35,22 @@ function timeAgo(ts) {
   return `${Math.floor(sec/86400)}天前`;
 }
 
+
+// ── Tool color map (shared) ──────────────────────────────
+const toolColors = {
+  Bash: '#e67e22', Read: '#3498db', Write: '#2ecc71', Edit: '#9b59b6',
+  WebSearch: '#1abc9c', WebFetch: '#16a085', Browser: '#e74c3c',
+  memory_search: '#f39c12', memory_get: '#d35400',
+};
+function getToolColor(name) {
+  for (const [k, v] of Object.entries(toolColors)) {
+    if (name.toLowerCase().includes(k.toLowerCase())) return v;
+  }
+  return '#7f8c8d';
+}
 function fmtTime(ts) {
   if (!ts) return '—';
-  return new Date(typeof ts === 'number' ? ts : ts).toLocaleString('zh-CN', { hour12: false });
+  return new Date(ts).toLocaleString('zh-CN', { hour12: false });
 }
 
 function esc(str) {
@@ -107,6 +120,7 @@ function updateAlertBadge(alerts) {
 /* ── Router ── */
 let currentPage = 'overview';
 let currentAgent = null;
+let _subrunExpanded = {};
 let currentSession = null;
 // Page-level auto refresh timers
 const pageTimers = {};
@@ -863,7 +877,6 @@ async function loadAgentSubruns(agentId) {
       return;
     }
     // 展开/折叠状态映射
-  const _subrunExpanded = {};
 
   function _toggleSubrun(runId) {
     _subrunExpanded[runId] = !_subrunExpanded[runId];

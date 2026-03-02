@@ -19,8 +19,11 @@ const OPENCLAW_DIR = process.env.OPENCLAW_DIR || path.join(os.homedir(), '.openc
 // Avoids hardcoding agent names or workspace paths anywhere else.
 
 let _agentConfigCache = null;
+let _tokenCache = null;
+let _tokenCacheAt = 0;
 let _agentConfigCacheAt = 0;
 const AGENT_CONFIG_TTL = 30000;
+const GATEWAY_LOG_DIR = process.env.GATEWAY_LOG_DIR || '/tmp/openclaw';
 
 function getAgentConfigs() {
   const now = Date.now();
@@ -73,7 +76,10 @@ app.get('/api/sse', (req, res) => {
   res.flushHeaders();
   res.write('event: ping\ndata: {}\n\n');
   sseClients.add(res);
-  req.on('close', () => sseClients.delete(res));
+  const _sseCleanup = () => sseClients.delete(res);
+  req.on('close', _sseCleanup);
+  res.on('finish', _sseCleanup);
+  res.on('error', _sseCleanup);
 });
 
 setInterval(() => {
@@ -132,6 +138,8 @@ function listAllJsonlFiles(sessionsDir) {
 //   5. 每文件最多读取 5000 条记录（与 buildAnalyticsTokens 一致）
 
 function aggregateAllAgentTokens() {
+  const now = Date.now();
+  if (_tokenCache && now - _tokenCacheAt < 30000) return _tokenCache;
   const agentsDir = path.join(OPENCLAW_DIR, 'agents');
   let agentNames = [];
   try { agentNames = fs.readdirSync(agentsDir).filter(f => fs.statSync(path.join(agentsDir, f)).isDirectory()); } catch {}
@@ -456,7 +464,7 @@ app.get('/api/analytics/system', async (req, res) => {
 // /api/errors/gateway — 读取网关日志，提取 WARN/ERROR 条目（最近100条，倒序）
 app.get('/api/errors/gateway', (req, res) => {
   try {
-    const logDir = '/tmp/openclaw';
+    const logDir = GATEWAY_LOG_DIR;
     let logFiles = [];
     try {
       logFiles = fs.readdirSync(logDir)
@@ -1250,7 +1258,7 @@ function getDirSizes() {
     path.join(os.homedir(), '.openclaw'),
     path.join(os.homedir(), '.openclaw', 'logs'),
     path.join(os.homedir(), '.openclaw', 'agents'),
-    '/tmp/openclaw',
+    GATEWAY_LOG_DIR,
   ];
   const results = [];
   for (const dir of dirs) {
@@ -1426,7 +1434,7 @@ app.get('/api/toolbox/files', (req, res) => {
 app.get('/api/toolbox/gateway-logs', (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 200, 500);
   try {
-    const logDir = '/tmp/openclaw';
+    const logDir = GATEWAY_LOG_DIR;
     if (!fs.existsSync(logDir)) return res.json({ lines: [], files: [], generatedAt: Date.now() });
     const logFiles = fs.readdirSync(logDir)
       .filter(f => f.endsWith('.log'))

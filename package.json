@@ -1,7 +1,7 @@
 {
   "name": "openclaw-dashboard",
-  "version": "1.15.0",
-  "description": "OpenClaw Agent Dashboard - 本地 Agent 状态监控面板",
+  "version": "1.16.0",
+  "description": "OpenClaw Agent Dashboard - \u672c\u5730 Agent \u72b6\u6001\u76d1\u63a7\u9762\u677f",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
