@@ -1,6 +1,5 @@
 /**
- * OpenClaw Agent Dashboard - 本地后端服务
- * v1.2 - 数据统计(Analytics)：大模型Token消耗看板 + 系统算力监控
+ * OpenClaw Agent Dashboard
  */
 
 const express = require('express');
@@ -13,7 +12,45 @@ const { execSync } = require('child_process');
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3456;
-const OPENCLAW_DIR = path.join(os.homedir(), '.openclaw');
+const OPENCLAW_DIR = process.env.OPENCLAW_DIR || path.join(os.homedir(), '.openclaw');
+
+// ── Agent config helpers ──────────────────────────────────────────────────
+// Reads openclaw.json to build agentId -> { workspace, identity, model } map.
+// Avoids hardcoding agent names or workspace paths anywhere else.
+
+let _agentConfigCache = null;
+let _agentConfigCacheAt = 0;
+const AGENT_CONFIG_TTL = 30000;
+
+function getAgentConfigs() {
+  const now = Date.now();
+  if (_agentConfigCache && now - _agentConfigCacheAt < AGENT_CONFIG_TTL) return _agentConfigCache;
+  const config = readJsonFile(path.join(OPENCLAW_DIR, 'openclaw.json')) || {};
+  const defaultWorkspace = (config.agents && config.agents.defaults && config.agents.defaults.workspace)
+    || path.join(OPENCLAW_DIR, 'workspace');
+  const list = (config.agents && config.agents.list) || [];
+  const map = {};
+  for (const a of list) {
+    if (!a.id) continue;
+    map[a.id] = { workspace: a.workspace || defaultWorkspace, identity: a.identity || null, model: a.model || null };
+  }
+  _agentConfigCache = map;
+  _agentConfigCacheAt = now;
+  return map;
+}
+
+function getAgentWorkspace(agentId) {
+  const configs = getAgentConfigs();
+  if (configs[agentId] && configs[agentId].workspace) return configs[agentId].workspace;
+  return path.join(OPENCLAW_DIR, 'workspace-' + agentId);
+}
+
+function getDefaultTasksFile() {
+  const config = readJsonFile(path.join(OPENCLAW_DIR, 'openclaw.json')) || {};
+  const defaultWorkspace = (config.agents && config.agents.defaults && config.agents.defaults.workspace)
+    || path.join(OPENCLAW_DIR, 'workspace');
+  return path.join(defaultWorkspace, 'tasks.json');
+}
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -545,7 +582,7 @@ app.get('/api/agents', (req, res) => {
       const activeSessions = Object.values(sessionsJson);
       const times = activeSessions.map(s => s.updatedAt).filter(Boolean);
       if (times.length > 0) lastActive = Math.max(...times);
-      const workspaceDir = path.join(OPENCLAW_DIR, name === 'main' ? 'workspace' : 'workspace-' + name);
+      const workspaceDir = getAgentWorkspace(name);
       let identity = { name, emoji: '🤖' };
       const identityFile = path.join(workspaceDir, 'IDENTITY.md');
       if (fs.existsSync(identityFile)) {
@@ -743,7 +780,7 @@ app.get('/api/logs', (req, res) => {
 
 app.get('/api/agents/:agentId/memory', (req, res) => {
   const { agentId } = req.params;
-  const workspaceDir = path.join(OPENCLAW_DIR, agentId === 'main' ? 'workspace' : 'workspace-' + agentId);
+  const workspaceDir = getAgentWorkspace(agentId);
   const memoryDir = path.join(workspaceDir, 'memory');
   let files = [];
   if (fs.existsSync(memoryDir)) {
@@ -763,7 +800,7 @@ app.get('/api/agents/:agentId/memory', (req, res) => {
 app.get('/api/agents/:agentId/memory/:filename', (req, res) => {
   const { agentId, filename } = req.params;
   if (filename.includes('..') || filename.includes('/')) return res.status(400).json({ error: 'Invalid filename' });
-  const workspaceDir = path.join(OPENCLAW_DIR, agentId === 'main' ? 'workspace' : 'workspace-' + agentId);
+  const workspaceDir = getAgentWorkspace(agentId);
   const filePath = path.join(workspaceDir, 'memory', filename);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
   try { res.json({ filename, content: fs.readFileSync(filePath, 'utf8').slice(0, 10000) }); }
@@ -787,7 +824,7 @@ app.get('/api/knowledge/memory', (req, res) => {
     let latestMtime = null;
 
     for (const agentId of agentNames) {
-      const workspaceDir = path.join(OPENCLAW_DIR, agentId === 'main' ? 'workspace' : 'workspace-' + agentId);
+      const workspaceDir = getAgentWorkspace(agentId);
       const memoryDir = path.join(workspaceDir, 'memory');
       const memoryMdPath = path.join(workspaceDir, 'MEMORY.md');
 
@@ -937,7 +974,7 @@ app.get('/api/knowledge/skills', (req, res) => {
 
 app.get('/api/tasks', (req, res) => {
   try {
-    const tasksFile = path.join(os.homedir(), '.openclaw', 'workspace', 'tasks.json');
+    const tasksFile = getDefaultTasksFile();
     if (!fs.existsSync(tasksFile)) {
       return res.json({ tasks: [], generatedAt: Date.now() });
     }
@@ -1120,7 +1157,7 @@ app.get('/api/analytics/kpi', (req, res) => {
     const agentsDir = path.join(OPENCLAW_DIR, 'agents');
     const identityMap = {};
     for (const agentId of allAgentIds) {
-      const workspaceDir = path.join(OPENCLAW_DIR, agentId === 'main' ? 'workspace' : 'workspace-' + agentId);
+      const workspaceDir = getAgentWorkspace(agentId);
       let identity = { name: agentId, emoji: '🤖' };
       const identityFile = path.join(workspaceDir, 'IDENTITY.md');
       if (fs.existsSync(identityFile)) {
@@ -1131,17 +1168,8 @@ app.get('/api/analytics/kpi', (req, res) => {
           identity = { name: nm ? nm[1].trim() : agentId, emoji: em ? em[1].trim() : '🤖' };
         } catch {}
       }
-      // 名字映射：统一覆盖为纯中文称呼，去掉英文ID
-      const agentNameMap = {
-        main:   '主控',
-        code:   '小C',
-        flash:  '小F',
-        player: '小O',
-        writer: '小G',
-      };
-      if (agentNameMap[agentId]) {
-        identity.name = agentNameMap[agentId];
-      }
+      // Identity comes from openclaw.json (config) or IDENTITY.md (file).
+      // No hardcoded name overrides.
       identityMap[agentId] = identity;
     }
 
@@ -1274,7 +1302,7 @@ app.get('/api/analytics/disk', async (req, res) => {
 
 app.get('/api/tasks/enriched', (req, res) => {
   try {
-    const tasksFile = path.join(os.homedir(), '.openclaw', 'workspace', 'tasks.json');
+    const tasksFile = getDefaultTasksFile();
     const data = fs.existsSync(tasksFile) ? (JSON.parse(fs.readFileSync(tasksFile, 'utf8')) || {}) : {};
     const tasks = (data.tasks || []);
 
@@ -1437,7 +1465,7 @@ app.get('*', (req, res) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log('\n🤖 OpenClaw Dashboard v1.14 已启动');
+  console.log('\n🤖 OpenClaw Dashboard 已启动');
   console.log('📍 访问地址: http://localhost:' + PORT);
   console.log('📂 数据目录: ' + OPENCLAW_DIR);
   console.log('📡 SSE 实时推送: /api/sse');
