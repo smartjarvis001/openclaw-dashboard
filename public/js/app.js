@@ -269,14 +269,17 @@ function dismissAlert(btn) {
 /* ── Overview / Workbench ── */
 async function loadOverview() {
   try {
-    const [overview, subagents, agents, sysStats] = await Promise.all([
+    const [overview, subagents, agents, sysStats, modelStatus] = await Promise.all([
       API.get('/api/overview'),
       API.get('/api/subagents'),
       API.get('/api/agents'),
       API.get('/api/analytics/system').catch(() => null),
+      API.get('/api/models/status').catch(() => []),
     ]);
     renderOverview(overview, subagents);
-    renderAgentsCompact(agents, (overview.tokenUsage || {}).perAgent || {});
+    const modelStatusMap = {};
+    (modelStatus || []).forEach(m => { modelStatusMap[m.agentId] = m; });
+    renderAgentsCompact(agents, (overview.tokenUsage || {}).perAgent || {}, modelStatusMap);
     if (sysStats) renderSysStatusBar(sysStats);
   } catch (e) {
     console.error('loadOverview failed:', e);
@@ -372,7 +375,7 @@ function renderSysStatusBar(s) {
   `);
 }
 
-function renderAgentsCompact(agents, perAgentTokens) {
+function renderAgentsCompact(agents, perAgentTokens, modelStatusMap = {}) {
   const container = document.getElementById('agentsList');
   if (!container) return;
   const countEl = document.getElementById('agentsCount');
@@ -387,6 +390,14 @@ function renderAgentsCompact(agents, perAgentTokens) {
     const name = a.identity?.name || a.id;
     const tok = perAgentTokens[a.id] || {};
     const totalTok = tok.totalTokens || (tok.input||0) + (tok.output||0);
+    const ms = modelStatusMap[a.id] || {};
+    let modelStatusHtml = '';
+    if (ms.available === true) {
+      modelStatusHtml = `<div class="acc-model-status acc-model-ok" title="正常 · ${ms.responseTime || ''}ms">${ms.responseTime || ''}ms</div>`;
+    } else if (ms.available === false) {
+      const errCode = ms.error ? ms.error.replace(/^HTTP \d+ /, '') : 'ERR';
+      modelStatusHtml = `<div class="acc-model-status acc-model-err" title="${ms.error || '异常'}">${errCode}</div>`;
+    }
     return `
       <div class="agent-compact-card" onclick="openAgent('${esc(a.id)}')">
         <div class="acc-emoji">${esc(emoji)}</div>
@@ -395,6 +406,7 @@ function renderAgentsCompact(agents, perAgentTokens) {
           <div class="acc-meta">会话 ${a.sessionCount} · ${timeAgo(a.lastActive)}</div>
         </div>
         <div class="acc-stats">
+          ${modelStatusHtml}
           ${totalTok > 0 ? `<div class="acc-tokens">${numFmt(totalTok)} tok</div>` : ''}
           ${a.activeSessions > 0 ? `<div class="acc-active-sessions">${a.activeSessions} 活跃</div>` : ''}
         </div>

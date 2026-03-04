@@ -2625,6 +2625,9 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 .acc-stats { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
 .acc-tokens { font-size: 11px; color: #60a5fa; }
 .acc-active-sessions { font-size: 11px; color: #4ade80; }
+.acc-model-status { font-size: 11px; font-weight: 500; padding: 1px 6px; border-radius: 3px; }
+.acc-model-ok { color: #4ade80; background: rgba(74, 222, 128, 0.1); }
+.acc-model-err { color: #f87171; background: rgba(248, 113, 113, 0.1); }
 .acc-status {
   width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
 }

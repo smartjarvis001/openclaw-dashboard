@@ -71,6 +71,7 @@ async function checkModelStatus(modelConfig) {
 
   // 从环境变量读取 API Key，格式：{PROVIDER_NAME}_API_KEY
   const apiKey = process.env[`${provider.toUpperCase()}_API_KEY`] || '';
+  const startTime = Date.now();
 
   try {
     const url = `${baseUrl}/${apiType || 'chat/completions'}`;
@@ -92,14 +93,17 @@ async function checkModelStatus(modelConfig) {
     });
     clearTimeout(timeout);
 
+    const responseTime = Date.now() - startTime;
+
     if (response.ok) {
-      return { available: true, status: response.status };
+      return { available: true, status: response.status, responseTime };
     } else {
       const body = await response.text().catch(() => '');
-      return { available: false, error: `HTTP ${response.status}`, detail: body.slice(0, 200) };
+      return { available: false, error: `HTTP ${response.status}`, detail: body.slice(0, 200), responseTime };
     }
   } catch (err) {
-    return { available: false, error: err.name === 'AbortError' ? 'Timeout' : err.message };
+    const responseTime = Date.now() - startTime;
+    return { available: false, error: err.name === 'AbortError' ? 'Timeout' : err.message, responseTime };
   }
 }
 
@@ -121,6 +125,7 @@ async function checkAllModels() {
       ...model,
       available: status.available,
       error: status.error,
+      responseTime: status.responseTime,
       lastCheck: new Date().toISOString()
     });
   }
