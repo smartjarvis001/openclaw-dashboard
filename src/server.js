@@ -74,7 +74,8 @@ async function checkModelStatus(modelConfig) {
   const startTime = Date.now();
 
   try {
-    const url = `${baseUrl}/${apiType || 'chat/completions'}`;
+    // apiType in config is a label (e.g. "openai-completions"), always use chat/completions endpoint
+    const url = `${baseUrl}/chat/completions`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
 

@@ -101,8 +101,7 @@ function connectSSE() {
   });
 
   sseConn.addEventListener('modelStatus', (e) => {
-    const data = JSON.parse(e.data);
-    renderModelStatusBar(data);
+    if (currentPage === 'overview') loadOverview();
   });
 
   sseConn.addEventListener('ping', () => {
@@ -284,8 +283,6 @@ async function loadOverview() {
   } catch (e) {
     console.error('loadOverview failed:', e);
   }
-  // 异步加载模型状态（不阻塞主界面）
-  API.get('/api/models/status').then(renderModelStatusBar).catch(() => {});
 }
 
 function renderModelStatusBar(statuses) {
@@ -395,7 +392,7 @@ function renderAgentsCompact(agents, perAgentTokens, modelStatusMap = {}) {
     if (ms.available === true) {
       modelStatusHtml = `<div class="acc-model-status acc-model-ok" title="正常 · ${ms.responseTime || ''}ms">${ms.responseTime || ''}ms</div>`;
     } else if (ms.available === false) {
-      const errCode = ms.error ? ms.error.replace(/^HTTP \d+ /, '') : 'ERR';
+      const errCode = ms.error ? ms.error.replace(/^HTTP (\d+).*/, '$1') : 'ERR';
       modelStatusHtml = `<div class="acc-model-status acc-model-err" title="${ms.error || '异常'}">${errCode}</div>`;
     }
     return `
