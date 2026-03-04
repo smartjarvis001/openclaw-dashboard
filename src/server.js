@@ -25,6 +25,125 @@ let _agentConfigCacheAt = 0;
 const AGENT_CONFIG_TTL = 30000;
 const GATEWAY_LOG_DIR = process.env.GATEWAY_LOG_DIR || '/tmp/openclaw';
 
+// ── Model Monitor ────────────────────────────────────────────────────────
+// 读取 openclaw.json 获取模型配置，检测各模型可用性
+
+let _modelStatusCache = null;
+let _modelStatusCacheAt = 0;
+let _modelCheckTimer = null;
+
+// 读取模型配置
+function getModelConfigs() {
+  const config = readJsonFile(path.join(OPENCLAW_DIR, 'openclaw.json')) || {};
+  const agents = config.agents?.list || [];
+  const models = config.models?.providers || {};
+  
+  const agentModels = [];
+  for (const agent of agents) {
+    const modelId = agent.model;
+    if (!modelId) continue;
+    
+    const [providerName, modelName] = modelId.split('/');
+    const provider = models[providerName];
+    
+    if (!provider) continue;
+    
+    const modelConfig = (provider.models || []).find(m => m.id === modelId) || {};
+    const apiType = modelConfig.api || provider.api || 'chat/completions';
+    
+    agentModels.push({
+      agentId: agent.id,
+      agentName: agent.name,
+      modelId: modelId,
+      modelName: modelConfig.name || modelName,
+      provider: providerName,
+      baseUrl: provider.baseUrl,
+      apiType: apiType
+    });
+  }
+  return agentModels;
+}
+
+// 检测单个模型可用性
+async function checkModelStatus(modelConfig) {
+  const { baseUrl, apiType, modelId, provider } = modelConfig;
+  if (!baseUrl) return { available: false, error: 'No baseUrl (external)' };
+
+  // 从环境变量读取 API Key，格式：{PROVIDER_NAME}_API_KEY
+  const apiKey = process.env[`${provider.toUpperCase()}_API_KEY`] || '';
+
+  try {
+    const url = `${baseUrl}/${apiType || 'chat/completions'}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    const headers = { 'Content-Type': 'application/json' };
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: modelId,
+        messages: [{ role: 'user', content: 'hi' }],
+        max_tokens: 1
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+
+    if (response.ok) {
+      return { available: true, status: response.status };
+    } else {
+      const body = await response.text().catch(() => '');
+      return { available: false, error: `HTTP ${response.status}`, detail: body.slice(0, 200) };
+    }
+  } catch (err) {
+    return { available: false, error: err.name === 'AbortError' ? 'Timeout' : err.message };
+  }
+}
+
+// 定时巡检逻辑
+function getNextCheckInterval() {
+  const now = new Date();
+  const hour = now.getHours();
+  return (hour >= 9 && hour < 24) ? 300000 : 3600000;
+}
+
+// 执行模型状态检查
+async function checkAllModels() {
+  const models = getModelConfigs();
+  const results = [];
+  
+  for (const model of models) {
+    const status = await checkModelStatus(model);
+    results.push({
+      ...model,
+      available: status.available,
+      error: status.error,
+      lastCheck: new Date().toISOString()
+    });
+  }
+  
+  _modelStatusCache = results;
+  _modelStatusCacheAt = Date.now();
+  broadcastSSE('modelStatus', results);
+  
+  return results;
+}
+
+// 启动定时巡检
+function startModelMonitor() {
+  const runCheck = async () => {
+    await checkAllModels();
+    const interval = getNextCheckInterval();
+    _modelCheckTimer = setTimeout(runCheck, interval);
+  };
+  runCheck();
+}
+
+// ── Agent config helpers ──────────────────────────────────────────────────
+
 function getAgentConfigs() {
   const now = Date.now();
   if (_agentConfigCache && now - _agentConfigCacheAt < AGENT_CONFIG_TTL) return _agentConfigCache;
@@ -433,6 +552,19 @@ function buildOverview() {
     serverTime: now,
   };
 }
+
+// ── Model Status API ─────────────────────────────────────────────────
+
+app.get('/api/models/status', (req, res) => {
+  try {
+    // 如果缓存超过 1 分钟，强制刷新
+    if (!_modelStatusCache || Date.now() - _modelStatusCacheAt > 60000) {
+      checkAllModels().then(results => res.json(results));
+    } else {
+      res.json(_modelStatusCache);
+    }
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // ── Routes ────────────────────────────────────────────────────────────────
 
@@ -1477,6 +1609,7 @@ app.get('*', (req, res) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
+  startModelMonitor();
   console.log('\n🤖 OpenClaw Dashboard 已启动');
   console.log('📍 访问地址: http://localhost:' + PORT);
   console.log('📂 数据目录: ' + OPENCLAW_DIR);
