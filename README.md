@@ -7,7 +7,7 @@
 ## 🚀 快速启动
 
 ```bash
-git clone https://github.com/your-username/openclaw-dashboard.git
+git clone https://github.com/smartjarvis001/openclaw-dashboard.git
 cd openclaw-dashboard
 npm install
 ./start.sh
@@ -15,10 +15,38 @@ npm install
 
 服务默认跑在 **http://localhost:3456**
 
-如果在远程服务器上，用 SSH 隧道访问：
+---
+
+## 🌐 生产部署（pm2 + nginx）
+
+一键部署（推荐）：
+
 ```bash
-ssh -L 3456:localhost:3456 user@your-server-ip
-# 然后本地浏览器打开 http://localhost:3456
+./deploy.sh
+```
+
+脚本会自动完成：
+1. 安装 pm2（如未安装）
+2. 用 pm2 启动并托管进程
+3. 配置 pm2 开机自启
+4. 配置 nginx 反向代理到 **13456** 端口
+
+部署完成后通过 `http://<服务器IP>:13456` 访问。
+
+仅配置 nginx（进程已在运行时）：
+
+```bash
+./setup-nginx.sh
+```
+
+> ⚠️ 需要 `sudo` 免密权限配置 nginx。
+
+常用 pm2 命令：
+
+```bash
+pm2 status                        # 查看进程状态
+pm2 logs openclaw-dashboard       # 查看日志
+pm2 restart openclaw-dashboard    # 重启服务
 ```
 
 ### 环境变量
@@ -80,7 +108,10 @@ openclaw-dashboard/
 │   ├── index.html       # 单页应用入口
 │   ├── css/style.css    # 暗色主题 UI
 │   └── js/app.js        # 前端逻辑
-├── start.sh             # 一键启动脚本
+├── deploy.sh            # 一键部署（pm2 + nginx）
+├── setup-nginx.sh       # 仅配置 nginx
+├── start.sh             # 本地启动脚本
+├── nginx.conf           # nginx 反向代理配置（13456 → 3456）
 ├── package.json
 └── README.md
 ```
@@ -129,6 +160,8 @@ openclaw-dashboard/
 | v1.13 | 记忆大脑 Tab 二合一，工时精度修复 |
 | v1.14 | Token 统计口径统一 |
 | v1.15 | 去除 hardcode：Agent 配置从 openclaw.json 动态读取 |
+| v1.16 | 安全与性能优化 |
+| v1.16.1 | 部署脚本更新：deploy.sh 改用 pm2 托管，setup-nginx.sh 路径相对化 |
 
 ---
 
