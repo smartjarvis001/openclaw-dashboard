@@ -133,25 +133,33 @@ document.querySelectorAll('.nav-item').forEach(el => {
 });
 
 function navigateTo(page) {
+  // Agents page is merged into overview
+  if (page === 'agents') page = 'overview';
+
   // Stop any previous page timer
   Object.values(pageTimers).forEach(t => clearInterval(t));
   Object.keys(pageTimers).forEach(k => delete pageTimers[k]);
+  // Stop model health timer when leaving overview
+  if (_modelHealthTimer) { clearInterval(_modelHealthTimer); _modelHealthTimer = null; }
 
   currentPage = page;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === page));
   document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
   document.getElementById(`page-${page}`)?.classList.add('active');
 
-  if (page === 'agents') showAgentsList();
+  // Reset to agents list view when navigating to overview
+  if (page === 'overview') showAgentsList();
 
   loadPage(page);
 
-  // Set up page-specific auto-refresh (5s)
+  // Set up page-specific auto-refresh (60s)
   if (autoRefreshEnabled) {
     pageTimers[page] = setInterval(() => {
       if (currentPage === page) loadPage(page);
     }, REFRESH_INTERVAL);
   }
+  // Start model health 5-min timer on overview
+  if (page === 'overview') startModelHealthTimer();
 }
 
 async function loadPage(page) {
@@ -265,17 +273,61 @@ function dismissAlert(btn) {
 }
 
 /* ── Overview ── */
-async function loadOverview() {
+// Model health: refresh every 5 minutes, independent of the main overview refresh
+const MODEL_HEALTH_REFRESH_MS = 5 * 60 * 1000;
+let _modelHealthLastFetched = 0;
+let _modelHealthTimer = null;
+
+async function loadModelHealth(force) {
+  const now = Date.now();
+  if (!force && now - _modelHealthLastFetched < MODEL_HEALTH_REFRESH_MS) return;
+  const el = document.getElementById('modelHealthGrid');
+  if (!el) return;
+  if (force || _modelHealthLastFetched === 0) {
+    el.innerHTML = '<div class="model-health-loading">检测中...</div>';
+  }
   try {
-    const [overview, subagents] = await Promise.all([
-      API.get('/api/overview'),
-      API.get('/api/subagents'),
-    ]);
-    renderOverview(overview, subagents);
+    const data = await API.get('/api/models/health');
+    _modelHealthLastFetched = Date.now();
+    renderModelHealth(data);
+    const metaEl = document.getElementById('modelHealthMeta');
+    if (metaEl && data.checkedAt) {
+      metaEl.textContent = `上次检测 ${fmtTime(data.checkedAt)}`;
+    }
   } catch (e) {
-    document.getElementById('statsGrid').innerHTML = `<div class="stat-card" style="color:#f87171">加载失败: ${e.message}</div>`;
+    if (el) el.innerHTML = `<div class="model-health-loading" style="color:#f87171">检测失败: ${esc(e.message)}</div>`;
   }
 }
+
+function startModelHealthTimer() {
+  if (_modelHealthTimer) clearInterval(_modelHealthTimer);
+  _modelHealthTimer = setInterval(() => {
+    if (currentPage === 'overview') loadModelHealth(true);
+  }, MODEL_HEALTH_REFRESH_MS);
+}
+
+async function loadOverview() {
+  try {
+    const [overview, subagents, system] = await Promise.all([
+      API.get('/api/overview'),
+      API.get('/api/subagents'),
+      API.get('/api/analytics/system'),
+    ]);
+    renderOverview(overview, subagents);
+    renderSystemStats(system);
+    loadDiskMonitor();
+  } catch (e) {
+    const sg = document.getElementById('statsGrid');
+    if (sg) sg.innerHTML = `<div class="stat-card" style="color:#f87171">加载失败: ${e.message}</div>`;
+  }
+  // Load agents in parallel (non-blocking)
+  loadAgents();
+  // Model health loads independently (non-blocking) — refresh only if stale
+  loadModelHealth(false);
+}
+
+// 缓存 overview token 数据供 agent 卡片使用
+let _overviewTokenPerAgent = {};
 
 function renderOverview(overview, subagents) {
   document.getElementById('versionInfo').textContent = `v${overview.version}`;
@@ -287,68 +339,63 @@ function renderOverview(overview, subagents) {
   // Token usage
   const tu = overview.tokenUsage || {};
   const perAgent = tu.perAgent || {};
+  _overviewTokenPerAgent = perAgent;
 
+  // 右侧 Token 概览卡片
   const statsGrid = document.getElementById('statsGrid');
-  const hasErrors = overview.errorSubagents > 0 || (overview.alerts && overview.alerts.length > 0);
-  statsGrid.innerHTML = `
-    <div class="stat-card">
-      <div class="stat-label">Agents 数量</div>
-      <div class="stat-value">${overview.agentCount}</div>
-      <div class="stat-sub">${(overview.agents || []).join(' · ')}</div>
+  if (statsGrid) statsGrid.innerHTML = `
+    <div class="stat-card overview-stat-compact">
+      <div class="stat-label">总 Token</div>
+      <div class="stat-value" style="font-size:22px">${numFmt(tu.totalTokens||0)}</div>
+      <div class="stat-sub">↑${numFmt(tu.totalInput||0)} ↓${numFmt(tu.totalOutput||0)}</div>
     </div>
-    <div class="stat-card ${overview.activeSubagents > 0 ? 'stat-active' : ''}">
+    <div class="stat-card overview-stat-compact ${overview.activeSubagents > 0 ? 'stat-active' : ''}">
       <div class="stat-label">活跃 Subagents</div>
-      <div class="stat-value" style="color:${overview.activeSubagents > 0 ? '#4ade80' : '#60a5fa'}">${overview.activeSubagents}</div>
+      <div class="stat-value" style="font-size:22px;color:${overview.activeSubagents > 0 ? '#4ade80' : '#60a5fa'}">${overview.activeSubagents}</div>
       <div class="stat-sub">共 ${overview.totalSubagentRuns} 次运行</div>
     </div>
     ${overview.errorSubagents > 0 ? `
-    <div class="stat-card stat-error">
-      <div class="stat-label">⚠ 错误 Subagents</div>
-      <div class="stat-value" style="color:#f87171">${overview.errorSubagents}</div>
+    <div class="stat-card overview-stat-compact stat-error">
+      <div class="stat-label">⚠ 错误</div>
+      <div class="stat-value" style="font-size:22px;color:#f87171">${overview.errorSubagents}</div>
       <div class="stat-sub">需要关注</div>
     </div>
     ` : ''}
-    <div class="stat-card">
-      <div class="stat-label">总 Token 消耗</div>
-      <div class="stat-value" style="font-size:20px;padding-top:4px">${numFmt(tu.totalTokens||0)}</div>
-      <div class="stat-sub" style="display:flex;flex-direction:column;gap:2px;margin-top:4px">
-        <span><span style="color:#34d399">↑ 输入</span> ${numFmt(tu.totalInput||0)}</span>
-        <span><span style="color:#f472b6">↓ 输出</span> ${numFmt(tu.totalOutput||0)}</span>
-        <span><span style="color:#60a5fa">📦 缓存</span> ${numFmt(tu.totalCacheRead||0)}</span>
-      </div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-label">系统版本</div>
-      <div class="stat-value" style="font-size:18px;padding-top:6px">${esc(overview.version)}</div>
-      <div class="stat-sub">${overview.updateInfo?.latestVersion ? '最新: ' + overview.updateInfo.latestVersion : '本地版本'}</div>
+    <div class="stat-card overview-stat-compact">
+      <div class="stat-label">缓存命中</div>
+      <div class="stat-value" style="font-size:22px;color:#a78bfa">${numFmt(tu.totalCacheRead||0)}</div>
+      <div class="stat-sub">📦 cache tokens</div>
     </div>
   `;
 
-  // Token per-agent breakdown
+  // Token per-agent breakdown (compact right-panel style)
   const tokenSection = document.getElementById('tokenBreakdown');
   if (tokenSection) {
     const agents = Object.entries(perAgent);
     if (agents.length > 0) {
       tokenSection.innerHTML = `
-        <div class="section-title">Token 消耗明细</div>
-        <div class="token-grid">
-          ${agents.map(([name, usage]) => `
-            <div class="token-card">
-              <div class="token-agent">🤖 ${esc(name)}</div>
-              <div class="token-stats">
-                <div class="token-row"><span>输入</span><span class="token-val">${numFmt(usage.input)}</span></div>
-                <div class="token-row"><span>输出</span><span class="token-val">${numFmt(usage.output)}</span></div>
-                <div class="token-row"><span>消息数</span><span class="token-val">${usage.messages}</span></div>
+        <div class="section-title" style="margin-top:16px">Token 明细</div>
+        <div class="token-compact-list">
+          ${agents.map(([name, usage]) => {
+            const pct = Math.min(100, ((usage.totalTokens||usage.input+usage.output)/Math.max(1,tu.totalTokens||1))*100).toFixed(1);
+            return `
+              <div class="token-compact-row">
+                <div class="token-compact-agent">${esc(name)}</div>
+                <div class="token-compact-nums">
+                  <span class="tc-in">${numFmt(usage.input)}</span>
+                  <span class="tc-sep">/</span>
+                  <span class="tc-out">${numFmt(usage.output)}</span>
+                </div>
+                <div class="token-bar-wrap" style="height:3px;margin-top:4px">
+                  <div class="token-bar" style="width:${pct}%"></div>
+                </div>
               </div>
-              <div class="token-bar-wrap">
-                <div class="token-bar" style="width:${Math.min(100, ((usage.totalTokens||usage.input+usage.output)/Math.max(1,tu.totalTokens||1))*100).toFixed(1)}%"></div>
-              </div>
-            </div>
-          `).join('')}
+            `;
+          }).join('')}
         </div>
       `;
     } else {
-      tokenSection.innerHTML = `<div class="section-title">Token 消耗</div><div class="empty-state" style="padding:20px"><div class="empty-icon">📊</div><div class="empty-text">暂无 Token 数据</div></div>`;
+      tokenSection.innerHTML = '';
     }
   }
 
@@ -385,45 +432,93 @@ async function loadAgents() {
   try {
     const agents = await API.get('/api/agents');
     const grid = document.getElementById('agentsList');
+    if (!grid) return;
     if (!agents.length) { grid.innerHTML = emptyState('暂无 Agent'); return; }
+
+    // Update meta
+    const metaEl = document.getElementById('agentsOverviewMeta');
+    if (metaEl) {
+      const active = agents.filter(a => a.activeSessions > 0).length;
+      metaEl.textContent = `${agents.length} 个 Agent · ${active} 个活跃`;
+    }
+
     grid.innerHTML = agents.map(a => {
+      const tokenData = _overviewTokenPerAgent[a.id] || {};
+      const totalTok = tokenData.totalTokens || (tokenData.input||0) + (tokenData.output||0);
+      const isActive = a.activeSessions > 0;
       const channels = [...new Set((a.sessions || []).map(s => s.channel).filter(Boolean))];
       return `
-        <div class="agent-card" onclick="openAgent('${esc(a.id)}')">
-          <div class="agent-emoji">${esc(a.identity?.emoji || '🤖')}</div>
-          <div>
-            <div class="agent-name">${esc(a.identity?.name || a.id)}</div>
-            <div class="agent-id">agent:${esc(a.id)}</div>
+        <div class="agent-card-overview ${isActive ? 'agent-card-active' : ''} ${currentAgent === a.id ? 'agent-card-selected' : ''}"
+             onclick="openAgent('${esc(a.id)}', ${JSON.stringify(esc(a.identity?.emoji || '🤖'))}, ${JSON.stringify(esc(a.identity?.name || a.id))})">
+          <div class="aco-header">
+            <span class="aco-emoji">${esc(a.identity?.emoji || '🤖')}</span>
+            <div class="aco-info">
+              <div class="aco-name">${esc(a.identity?.name || a.id)}</div>
+              <div class="aco-id">agent:${esc(a.id)}</div>
+            </div>
+            ${isActive ? '<span class="aco-active-dot" title="有活跃会话"></span>' : ''}
           </div>
-          <div class="agent-stats">
-            <div class="agent-stat">会话 <strong>${a.sessionCount}</strong></div>
-            <div class="agent-stat">活跃 <strong>${a.activeSessions}</strong></div>
+          <div class="aco-metrics">
+            <div class="aco-metric">
+              <span class="aco-metric-label">会话</span>
+              <span class="aco-metric-val">${a.sessionCount}</span>
+            </div>
+            <div class="aco-metric">
+              <span class="aco-metric-label">活跃</span>
+              <span class="aco-metric-val" style="color:${isActive?'#4ade80':'#64748b'}">${a.activeSessions}</span>
+            </div>
+            <div class="aco-metric">
+              <span class="aco-metric-label">Token</span>
+              <span class="aco-metric-val" style="color:#a78bfa">${numFmt(totalTok)}</span>
+            </div>
           </div>
-          ${channels.length ? `<div class="agent-channels">${channels.map(c => `<span class="channel-tag">${esc(c)}</span>`).join('')}</div>` : ''}
-          <div class="agent-last">最后活跃 ${timeAgo(a.lastActive)}</div>
+          ${channels.length ? `<div class="agent-channels" style="margin-top:6px">${channels.map(c => `<span class="channel-tag">${esc(c)}</span>`).join('')}</div>` : ''}
+          <div class="aco-last">最后活跃 ${timeAgo(a.lastActive)}</div>
         </div>
       `;
     }).join('');
   } catch (e) {
-    document.getElementById('agentsList').innerHTML = `<div style="color:#f87171">加载失败: ${e.message}</div>`;
+    const grid = document.getElementById('agentsList');
+    if (grid) grid.innerHTML = `<div style="color:#f87171">加载失败: ${e.message}</div>`;
   }
 }
 
 function showAgentsList() {
-  document.getElementById('agentsList').classList.remove('hidden');
-  document.getElementById('agentDetail').classList.add('hidden');
-  document.getElementById('sessionDetail').classList.add('hidden');
+  const list = document.getElementById('agentsList');
+  const detail = document.getElementById('agentDetail');
+  const session = document.getElementById('sessionDetail');
+  if (list) list.classList.remove('hidden');
+  if (detail) detail.classList.add('hidden');
+  if (session) session.classList.add('hidden');
   currentAgent = null;
   currentSession = null;
+  // Remove selected highlight
+  document.querySelectorAll('.agent-card-selected').forEach(el => el.classList.remove('agent-card-selected'));
 }
 
-async function openAgent(agentId) {
+async function openAgent(agentId, emoji, name) {
   currentAgent = agentId;
+
+  // Highlight selected card
+  document.querySelectorAll('.agent-card-overview').forEach(el => el.classList.remove('agent-card-selected'));
+  // Find the clicked card and mark it
+  const cards = document.querySelectorAll('.agent-card-overview');
+  cards.forEach(card => {
+    if (card.onclick && card.onclick.toString().includes(`'${agentId}'`)) {
+      card.classList.add('agent-card-selected');
+    }
+  });
+
   document.getElementById('agentsList').classList.add('hidden');
   document.getElementById('sessionDetail').classList.add('hidden');
   const detail = document.getElementById('agentDetail');
   detail.classList.remove('hidden');
-  document.getElementById('detailAgentName').textContent = `agent:${agentId}`;
+
+  const emojiEl = document.getElementById('detailAgentEmoji');
+  if (emojiEl) emojiEl.textContent = emoji || '🤖';
+  const nameEl = document.getElementById('detailAgentName');
+  if (nameEl) nameEl.textContent = name || `agent:${agentId}`;
+
   switchTab('sessions');
   await loadSessionsList(agentId);
 }
@@ -1017,6 +1112,7 @@ document.getElementById('autoRefreshIndicator') && document.getElementById('auto
 connectSSE();
 updateRefreshIndicator();
 loadOverview();
+startModelHealthTimer();
 
 /* ── v1.2 Analytics ──────────────────────────────────────────────────────── */
 
@@ -1028,16 +1124,11 @@ let _trendChart = null; // v1.7 每日Token趋势图
 async function loadAnalytics() {
   document.getElementById('analyticsUpdate').textContent = '加载中...';
   try {
-    const [tokens, system] = await Promise.all([
-      API.get('/api/analytics/tokens'),
-      API.get('/api/analytics/system'),
-    ]);
-    renderSystemStats(system);
+    const tokens = await API.get('/api/analytics/tokens');
     renderTokenAnalytics(tokens);
-    loadDiskMonitor();
     document.getElementById('analyticsUpdate').textContent = '更新于 ' + fmtTime(Date.now());
   } catch (e) {
-    document.getElementById('systemGrid').innerHTML = `<div class="sys-card" style="color:#f87171">加载失败: ${e.message}</div>`;
+    document.getElementById('analyticsUpdate').textContent = '加载失败';
   }
 }
 
@@ -1096,6 +1187,33 @@ function renderSystemStats(s) {
       <span class="sys-banner-gauge-fill ${memClass}" style="width:${Math.min(100,memPct)}%"></span>
     </span>
   `;
+}
+
+/* ── Model Health ── */
+function renderModelHealth(data) {
+  const el = document.getElementById('modelHealthGrid');
+  if (!el) return;
+  const agents = (data && data.agents) || [];
+  if (agents.length === 0) {
+    el.innerHTML = '<div class="model-health-loading">无模型配置</div>';
+    return;
+  }
+  el.innerHTML = agents.map(a => {
+    const isOk = a.status === 'ok';
+    const isExt = a.status === 'external';
+    const isErr = a.status === 'error';
+    const statusClass = isOk ? 'mh-ok' : isExt ? 'mh-ext' : isErr ? 'mh-err' : 'mh-pending';
+    const statusIcon = isOk ? '✅' : isExt ? '🌐' : isErr ? '❌' : '⏳';
+    const statusLabel = isOk ? `${a.latency}ms` : isExt ? '外部服务' : isErr ? (a.error || '不可达') : '检测中';
+    const providerTag = a.providerName ? `<span class="mh-provider">${esc(a.providerName)}</span>` : '';
+    return `
+      <div class="model-health-card ${statusClass}">
+        <div class="mh-agent">${esc(a.agentName || a.agentId)}</div>
+        <div class="mh-model">${providerTag}<span class="mh-model-name" title="${esc(a.model)}">${esc(a.modelShort || a.model)}</span></div>
+        <div class="mh-status">${statusIcon} <span>${esc(statusLabel)}</span></div>
+      </div>
+    `;
+  }).join('');
 }
 
 function renderTokenAnalytics(data) {
