@@ -68,7 +68,6 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
 
 /* ── Section Title ── */
 .section-title { font-size: 13px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 12px; }
-.section-title-meta { font-size: 11px; font-weight: 400; color: #64748b; text-transform: none; letter-spacing: 0; margin-left: 8px; }
 
 /* ── Card List (recent subagents) ── */
 .card-list { display: flex; flex-direction: column; gap: 8px; }
@@ -2519,72 +2518,3 @@ html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Sego
     font-size: 11px !important;
   }
 }
-
-/* ── Model Health Grid ── */
-.model-health-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 10px;
-}
-.model-health-loading {
-  color: #64748b;
-  font-size: 13px;
-  padding: 8px 0;
-}
-.model-health-card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  background: #1e293b;
-  border: 1px solid #334155;
-  border-radius: 10px;
-  padding: 10px 14px;
-  min-width: 160px;
-  max-width: 220px;
-  flex: 1 1 160px;
-  transition: border-color 0.2s;
-}
-.model-health-card.mh-ok { border-color: #166534; }
-.model-health-card.mh-err { border-color: #7f1d1d; background: #1a1a2e; }
-.model-health-card.mh-ext { border-color: #1e40af; }
-.model-health-card.mh-pending { border-color: #374151; }
-.mh-agent {
-  font-size: 13px;
-  font-weight: 600;
-  color: #e2e8f0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.mh-model {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  color: #94a3b8;
-}
-.mh-provider {
-  background: #273449;
-  border-radius: 4px;
-  padding: 1px 5px;
-  font-size: 10px;
-  color: #60a5fa;
-  flex-shrink: 0;
-}
-.mh-model-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.mh-status {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  margin-top: 2px;
-}
-.mh-ok .mh-status span { color: #4ade80; font-weight: 600; }
-.mh-err .mh-status span { color: #f87171; font-size: 11px; }
-.mh-ext .mh-status span { color: #60a5fa; }
-.mh-pending .mh-status span { color: #64748b; }
