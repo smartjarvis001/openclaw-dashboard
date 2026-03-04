@@ -163,6 +163,7 @@ openclaw-dashboard/
 | v1.16 | 安全与性能优化 |
 | v1.16.1 | 部署脚本更新：deploy.sh 改用 pm2 托管，setup-nginx.sh 路径相对化 |
 | v1.17 | 各 Agent 独立监控面板：新增各 Agent 独立的监控页面，支持查看每个 Agent 的会话、任务、Token 消耗、工时统计等详细数据 |
+| v1.18 | Agents 列表过滤：自动隐藏纯 ACP 调用的 Agent（如通过 acp 调用的 Claude Code），只显示有原生 Subagent 会话的 Agent |
 
 ---
 

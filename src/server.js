@@ -601,6 +601,10 @@ app.get('/api/agents', (req, res) => {
           identity = { name: nm ? nm[1].trim() : name, emoji: em ? em[1].trim() : '🤖' };
         } catch {}
       }
+      // Skip agents where all sessions are ACP (no native subagent sessions)
+      const hasNativeSessions = sessionFiles.length > 0 || activeSessions.some(s => !s.acp);
+      if (!hasNativeSessions) continue;
+
       agents.push({
         id: name,
         identity,
